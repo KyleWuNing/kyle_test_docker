@@ -7,3 +7,7 @@ docker ps
 
 # run one month
 brew cleanup
+
+# litellm docker url
+http://localhost:4000/ui
+admin/admin
