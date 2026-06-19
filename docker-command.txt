@@ -1,0 +1,9 @@
+# start docker
+docker compose up -d
+
+docker compose down
+
+docker ps
+
+# run one month
+brew cleanup
