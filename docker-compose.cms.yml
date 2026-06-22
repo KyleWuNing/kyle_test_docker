@@ -1,0 +1,57 @@
+version: "3.9"
+
+# CMS deployment — reuses all infrastructure from docker-compose.yml.
+#
+# Prerequisites:
+#   1. Build the fat JAR:
+#        cd /Users/kylewu/IdeaProjects/cost-management && mvn package -DskipTests
+#   2. Start the base stack (first time or after Kafka config change, recreate Kafka):
+#        docker-compose up -d --force-recreate kafka
+#        docker-compose up -d
+#   3. Create the CMS database in MySQL (one-time):
+#        docker exec -it local-mysql mysql -u root -proot -e \
+#          "CREATE DATABASE IF NOT EXISTS moon_cake CHARACTER SET utf8mb4;"
+#   4. Start CMS:
+#        docker-compose -f docker-compose.yml -f docker-compose.cms.yml up -d cms
+#
+# LiteLLM master key:  sk-local-master-key  (from docker-compose.yml)
+# CMS admin API key:   cms-admin-key-local   (set below, use in Authorization: Bearer header)
+
+services:
+  cms:
+    build:
+      context: /Users/kylewu/IdeaProjects/cost-management
+      dockerfile: src/main/docker/Dockerfile
+      args:
+        JAR_FILE: target/cost-management-service-1.0.0-SNAPSHOT-exec.jar
+    container_name: local-cms
+    ports:
+      - "19000:19000"
+    environment:
+      # ── Database (MySQL local-mysql) ──────────────────────────────────────
+      DB_HOST: local-mysql
+      DB_PORT: 3306
+      DB_NAME: moon_cake
+      DB_USER: root
+      DB_PASSWORD: root
+      # Use 'update' to auto-create/update tables (including kafka_event from EB common library)
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+      # ── Kafka (internal listener for Docker-to-Docker) ────────────────────
+      KAFKA_SERVER: local-kafka:29092
+
+      # ── LiteLLM (local-litellm) ───────────────────────────────────────────
+      LITELLM_BASE_URL: http://local-litellm:4000
+      LITELLM_MASTER_KEY: sk-local-master-key
+      # Master key doubles as virtual key for local testing
+      LITELLM_VIRTUAL_KEY: sk-local-master-key
+
+      # ── CMS admin security ────────────────────────────────────────────────
+      ADMIN_API_KEY: cms-admin-key-local
+    networks:
+      - kylewu-test_default
+    restart: unless-stopped
+
+networks:
+  kylewu-test_default:
+    external: true
