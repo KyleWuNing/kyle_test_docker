@@ -89,8 +89,8 @@ docker compose -f docker-compose.yml -f docker-compose.cms.yml up -d --build cms
 # Verify CMS started cleanly (look for "Started CostManagementApplication")
 docker logs local-cms --tail 60
 
-# Health check — should return HTTP 200
-curl -s -o /dev/null -w "%{http_code}" http://localhost:19000/cms-hub/actuator/health
+# Health check — should return HTTP 200 (requires DB user: admin/admin, status=0, deleted=false)
+curl -s -o /dev/null -w "%{http_code}" -u admin:admin http://localhost:19000/cms-hub/actuator/health
 
 
 2.3  Stop / restart CMS only (without touching other services)

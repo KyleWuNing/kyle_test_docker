@@ -5,7 +5,7 @@ docker compose down
 
 docker ps
 
-# run one month
+# run once a month
 brew cleanup
 
 # litellm docker url
