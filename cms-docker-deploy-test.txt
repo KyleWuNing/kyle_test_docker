@@ -1,0 +1,414 @@
+================================================================================
+ CMS (Cost Management Service) — Local Docker Deploy & Test Guide
+ Project:  /Users/kylewu/IdeaProjects/cost-management
+ Test env: /Users/kylewu/IdeaProjects/kylewu-test
+================================================================================
+
+OVERVIEW
+--------
+CMS is a Spring Boot 3.4.1 service that sits between EB Admin / Tenants and
+LiteLLM.  It manages model groups, LLM models, proxy chat completions, and
+publishes usage events to Kafka.
+
+The local Docker stack (docker-compose.yml) provides:
+  • local-mysql      MySQL 8      port 3306   — CMS application DB
+  • local-redis      Redis 7      port 6379   — EB common library cache
+  • local-kafka      Kafka KRaft  port 9092 (host) / 29092 (Docker-internal)
+  • local-postgres   PostgreSQL   port 5432   — LiteLLM internal DB
+  • local-litellm    LiteLLM      port 4000   — LLM proxy
+
+docker-compose.cms.yml adds:
+  • local-cms        CMS service  port 19000  — this service
+
+
+================================================================================
+ SECTION 1 — ONE-TIME SETUP
+================================================================================
+
+1.1  Start the base infrastructure
+-----------------------------------
+cd /Users/kylewu/IdeaProjects/kylewu-test
+
+# First time only (or after changing Kafka config): force-recreate Kafka
+docker compose up -d --force-recreate kafka
+
+# Start all base services (MySQL, Redis, Kafka, PostgreSQL, LiteLLM)
+docker compose up -d
+
+# Verify all 5 containers are healthy
+docker ps
+# Expected containers: local-mysql, local-redis, local-kafka, local-postgres, local-litellm
+
+
+1.2  Create the CMS database in MySQL (one-time)
+-------------------------------------------------
+# MySQL starts with database 'local_db'; CMS needs 'moon_cake'
+docker exec -it local-mysql mysql -u root -proot \
+  -e "CREATE DATABASE IF NOT EXISTS moon_cake CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+# Verify
+docker exec -it local-mysql mysql -u root -proot -e "SHOW DATABASES;"
+# Should include: moon_cake
+
+
+1.3  Wait for LiteLLM to be ready
+-----------------------------------
+# LiteLLM depends on PostgreSQL and runs DB migrations on first start — give it ~30 seconds.
+# Check the UI is up:
+open http://localhost:4000/ui
+# Login: admin / admin  (set by UI_USERNAME / UI_PASSWORD in docker-compose.yml)
+#
+# LiteLLM master key for local: sk-local-master-key
+# (matches LITELLM_MASTER_KEY in docker-compose.yml and docker-compose.cms.yml)
+
+
+================================================================================
+ SECTION 2 — BUILD & DEPLOY CMS
+================================================================================
+
+2.1  Build the CMS fat JAR
+----------------------------
+cd /Users/kylewu/IdeaProjects/cost-management
+
+# Skip tests for a fast build (tests require no live services)
+mvn package -DskipTests
+
+# The exec JAR is placed at:
+#   target/cost-management-service-1.0.0-SNAPSHOT-exec.jar
+# (docker-compose.cms.yml references this path in the build ARG JAR_FILE)
+
+
+2.2  Build and start the CMS Docker container
+----------------------------------------------
+cd /Users/kylewu/IdeaProjects/kylewu-test
+
+# Build the CMS image and start the container
+# --build forces Docker to rebuild the image from the new JAR
+docker compose -f docker-compose.yml -f docker-compose.cms.yml up -d --build cms
+
+# Verify CMS started cleanly (look for "Started CostManagementApplication")
+docker logs local-cms --tail 60
+
+# Health check — should return HTTP 200
+curl -s -o /dev/null -w "%{http_code}" http://localhost:19000/cms-hub/actuator/health
+
+
+2.3  Stop / restart CMS only (without touching other services)
+---------------------------------------------------------------
+# Stop CMS
+docker compose -f docker-compose.yml -f docker-compose.cms.yml stop cms
+
+# Restart after a JAR rebuild (re-does mvn package, then restarts)
+mvn package -DskipTests -f /Users/kylewu/IdeaProjects/cost-management/pom.xml
+docker compose -f docker-compose.yml -f docker-compose.cms.yml up -d --build cms
+
+
+2.4  View CMS logs
+-------------------
+docker logs local-cms -f           # follow live
+docker logs local-cms --tail 100   # last 100 lines
+
+
+================================================================================
+ SECTION 3 — application.properties CONFIGURATION
+================================================================================
+
+All environment variables below are injected via docker-compose.cms.yml.
+The values shown match the local Docker stack.  For production, replace with
+real secrets via your secret manager / ECS task definition.
+
+REFERENCE: src/main/resources/application.properties
+Each property is mapped from an env var with a default fallback, e.g.:
+  spring.datasource.url = jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/...
+
+──────────────────────────────────────────────────────────────────────────────
+ 3.1  Database (MySQL) — connects to local-mysql
+──────────────────────────────────────────────────────────────────────────────
+
+  DB_HOST=local-mysql
+    # Docker service name of MySQL.  Use 'localhost' when running CMS on host.
+    # application.properties: spring.datasource.url=jdbc:mysql://${DB_HOST:localhost}:...
+
+  DB_PORT=3306
+    # MySQL port.  Default 3306.
+
+  DB_NAME=moon_cake
+    # CMS application database created in step 1.2.
+    # application.properties: .../${DB_NAME:moon_cake}?rewriteBatchedStatements=true&...
+
+  DB_USER=root
+    # MySQL username.  Matches MYSQL_ROOT_PASSWORD in docker-compose.yml.
+
+  DB_PASSWORD=root
+    # MySQL password.
+
+  SPRING_JPA_HIBERNATE_DDL_AUTO=update
+    # 'update': Hibernate auto-creates/alters tables on startup.
+    #   Use for local Docker where the schema does not pre-exist.
+    #   Tables created: yty_cms_model_group, yty_cms_llm_model, yty_cms_chunk_detail
+    #   yty_kafka_event is also auto-created by the EB common KafkaEventService.
+    # 'validate': checks schema matches JPA entities; fails if tables are missing.
+    #   Use in production after schema is pre-applied via DDL.
+    # application.properties: spring.jpa.hibernate.ddl-auto=${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
+
+  DB_MAX_POOL_SIZE (optional, default 25)
+    # HikariCP max connections.
+
+──────────────────────────────────────────────────────────────────────────────
+ 3.2  Redis — connects to local-redis (required by EB common library)
+──────────────────────────────────────────────────────────────────────────────
+
+  SPRING_DATA_REDIS_HOST=local-redis
+    # Docker service name of Redis.  Use 'localhost' when running CMS on host.
+    # The EB common library AuthCacheService / rate-limiter depends on Redis.
+    # Without this, the Spring Data Redis auto-configuration will fail at startup.
+
+  SPRING_DATA_REDIS_PORT=6379
+    # Redis port.  Default 6379.
+
+──────────────────────────────────────────────────────────────────────────────
+ 3.3  Kafka — connects to local-kafka (Docker-internal listener)
+──────────────────────────────────────────────────────────────────────────────
+
+  KAFKA_SERVER=local-kafka:29092
+    # Use the PLAINTEXT_INTERNAL listener (port 29092) for Docker-to-Docker.
+    # Use localhost:9092 only when CMS runs on the host machine (outside Docker).
+    # application.properties:
+    #   spring.kafka.bootstrap-servers=${KAFKA_SERVER:localhost:9092}
+    #   yty.kafka.bootstrap-servers=${KAFKA_SERVER:localhost:9092}
+    #
+    # Topics auto-created by CMS producers on first publish:
+    #   CmsUsageDoneEvent, CmsUsageCompletedEvent, CmsUsageNotificationEvent
+    # DLT (dead letter) topics routed to:
+    #   CmsUsageDoneEvent.DLT, CmsUsageCompletedEvent.DLT
+
+──────────────────────────────────────────────────────────────────────────────
+ 3.4  LiteLLM — connects to local-litellm
+──────────────────────────────────────────────────────────────────────────────
+
+  LITELLM_BASE_URL=http://local-litellm:4000
+    # LiteLLM proxy URL (Docker-internal).  Use http://localhost:4000 on host.
+    # application.properties: litellm.base-url=${LITELLM_BASE_URL:http://litellm-service:4000}
+    # CMS uses this for:
+    #   POST  /model/new        — register a model (CmsLiteLLMAdminClient)
+    #   PATCH /model/{id}/update — update a model
+    #   POST  /model/delete      — delete a model
+    #   POST  /v1/chat/completions — proxy tenant requests
+
+  LITELLM_MASTER_KEY=sk-local-master-key
+    # Must match LITELLM_MASTER_KEY in docker-compose.yml (LiteLLM side) AND
+    # the general_settings.master_key in litellm_config.yaml.
+    # Used by CmsLiteLLMAdminClient for model management calls only (Authorization: Bearer).
+    # application.properties: litellm.master-key=${LITELLM_MASTER_KEY:sk-master-placeholder}
+
+  LITELLM_VIRTUAL_KEY=sk-local-master-key
+    # Key #4: Global CMS virtual key for proxy completion calls.
+    # For local testing the master key doubles as the virtual key.
+    # In production: create a dedicated key via LiteLLM POST /key/generate.
+    # application.properties: litellm.virtual-key=${LITELLM_VIRTUAL_KEY:sk-virtual-placeholder}
+
+  LITELLM_CONNECT_TIMEOUT_MS (optional, default 5000)
+    # TCP connect timeout in ms for RestTemplate (admin + non-streaming).
+
+  LITELLM_READ_TIMEOUT_MS (optional, default 120000)
+    # Response read timeout in ms for the non-streaming RestTemplate.
+
+  LITELLM_STREAMING_READ_TIMEOUT_MS (optional, default 300000)
+    # Socket read timeout in ms for the streaming CloseableHttpClient (SSE).
+
+──────────────────────────────────────────────────────────────────────────────
+ 3.5  CMS Admin Security
+──────────────────────────────────────────────────────────────────────────────
+
+  ADMIN_API_KEY=cms-admin-key-local
+    # All /cost-management/** endpoints require: Authorization: Bearer <ADMIN_API_KEY>
+    # Verified by AdminAuthInterceptor against the value in application.properties.
+    # application.properties: admin.api-key=${ADMIN_API_KEY:change-me-in-production}
+    # Test script (scripts/test-cms.sh) uses: ADMIN_KEY="cms-admin-key-local"
+
+──────────────────────────────────────────────────────────────────────────────
+ 3.6  EB Common Library Properties (pre-configured, usually no change needed)
+──────────────────────────────────────────────────────────────────────────────
+
+  TOKEN_EXPIRATION_HOURS (default 24)
+    # JWT token TTL issued by the EB common JwtAuthService.
+
+  CORS_ALLOWED_ORIGINS (default http://localhost:3000,http://localhost:8080)
+    # Comma-separated allowed origins for CorsConfigProperties.
+
+  DEFAULT_LIMIT_COUNT (default 200) / DEFAULT_WINDOW_SECONDS (default 60)
+    # Rate limiter settings from EB common RateLimitFilter.
+
+  ENTITLEMENT_RUNTIME_ENABLED (default false)
+    # Set to false — CMS does not use entitlement runtime checks in V1.
+
+  SERVICE_ENV (default testing)
+    # Identifies the runtime environment (testing / production).
+
+  SERVICE_ID (default 652789d7-f025-47ea-a060-27b8aeb7e492)
+    # Stable UUID identifying this CMS service instance.
+
+
+================================================================================
+ SECTION 4 — HOW THE LOCAL SERVICES CONNECT
+================================================================================
+
+  ┌─────────────────┐   Admin API      ┌───────────────────┐
+  │  EB Admin / curl│ ──Bearer key──▶  │   CMS (port 19000)│
+  └─────────────────┘                  │  local-cms        │
+                                        │                   │
+  ┌─────────────────┐   Tenant API     │  DB ──────────▶  local-mysql:3306   (moon_cake DB)
+  │  Tenant / curl  │ ──Bearer token─▶ │  Cache ────────▶  local-redis:6379
+  └─────────────────┘                  │  Kafka ────────▶  local-kafka:29092 (Docker-internal)
+                                        │  LiteLLM ──────▶  local-litellm:4000
+                                        └───────────────────┘
+                                                │
+                                        local-litellm:4000
+                                                │
+                                        local-postgres:5432   (LiteLLM DB — managed by LiteLLM)
+
+  KEY POINTS:
+  • CMS uses Docker-internal hostnames (local-mysql, local-redis, local-kafka, local-litellm)
+    because it runs inside Docker on the kylewu-test_default network.
+  • Kafka has two listeners:
+      PLAINTEXT://localhost:9092       — use this from host machine (e.g. Kafka CLI tools)
+      PLAINTEXT_INTERNAL://local-kafka:29092 — use this from CMS inside Docker
+  • LiteLLM uses local-postgres (port 5432) as its own internal DB for storing model
+    registry and virtual keys.  CMS never touches PostgreSQL directly.
+  • CMS database (moon_cake) is in local-mysql, separate from LiteLLM's postgres DB.
+
+
+================================================================================
+ SECTION 5 — RUN THE CMS FUNCTION TEST SCRIPT
+================================================================================
+
+5.1  Prerequisites
+-------------------
+  • All Docker containers running:
+      docker ps
+      # Must show: local-mysql, local-redis, local-kafka, local-postgres, local-litellm, local-cms
+
+  • jq installed (required for parsing JSON responses):
+      brew install jq
+
+  • python3 available (used to compute deterministic tenant UUID from token):
+      python3 --version
+
+
+5.2  Run the test script
+-------------------------
+cd /Users/kylewu/IdeaProjects/cost-management
+
+bash scripts/test-cms.sh
+
+  The script runs 19 test steps in sequence:
+
+  [ 1] POST  /cost-management/model-group        — create a model group → expect 201
+  [ 2] GET   /cost-management/model-group/{id}   — get the group by id  → expect 200
+  [ 3] GET   /cost-management/model-group        — list groups, page=1  → expect 200
+  [ 4] PUT   /cost-management/model-group/{id}   — update description   → expect 200
+  [ 5] POST  /cost-management/model/{groupId}    — create model (mock_response) → expect 201
+  [ 6] GET   /cost-management/model/{gid}/{mid}  — get model            → expect 200
+  [ 7] GET   /cost-management/model/{groupId}    — list models, page=1  → expect 200
+  [ 8] POST  /v1/chat/completions  [NON-STREAMING] → expect 200 + outbox CmsUsageCompletedEvent
+  [ 9] POST  /v1/chat/completions  [STREAMING]     → expect SSE chunks + outbox CmsUsageDoneEvent
+  [10] POST  /v1/chat/completions  (duplicate requestId) → expect 409
+  [11] POST  /v1/chat/completions  (missing X-Request-Id) → expect 400
+  [12] GET   /cost-management/model-group        (wrong admin key) → expect 401
+  [13] PUT   /cost-management/model/{gid}/{mid}  — update litellmParams → expect 200
+  [14] DELETE /cost-management/model/{gid}/{mid} — soft-delete model    → expect 204
+  [15] GET   /cost-management/model/{gid}/{mid}  — deleted model        → expect 404
+  [16] DELETE /cost-management/model-group/{id}  — soft-delete group    → expect 204
+  [17] GET   /cost-management/model-group/{id}   — deleted group        → expect 404
+  [18] GET   /cost-management/model-group?page=0 — page validation      → expect 400
+  [19] POST  /v1/chat/completions  (no Authorization header) → expect 401
+
+  On success, the final line prints:
+    All 19 tests passed!  (0 failed)
+
+
+5.3  What the outbox checks verify
+------------------------------------
+  Steps 8 and 9 query MySQL directly to confirm the Kafka outbox row exists:
+
+    docker exec local-mysql bash -c \
+      "mysql -uroot -proot moon_cake -sNe \
+       'SELECT id, topic, status, created_at FROM yty_kafka_event
+        WHERE topic=''CmsUsageCompletedEvent'' ORDER BY created_at DESC LIMIT 1;'"
+
+  • Non-streaming (step 8): one row in yty_kafka_event with topic=CmsUsageCompletedEvent
+  • Streaming (step 9): one row with topic=CmsUsageDoneEvent
+
+  These rows confirm the service persisted chunk_detail and published the outbox event
+  atomically.  The Kafka consumers pick them up asynchronously and publish
+  CmsUsageDoneEvent → CmsUsageCompletedEvent → CmsUsageNotificationEvent.
+
+
+5.4  Troubleshooting test failures
+------------------------------------
+  SYMPTOM: Step 5 (create model) fails with 502 or LiteLLM error
+  CAUSE:   LiteLLM is not ready or master key mismatch
+  FIX:     Check LiteLLM is up:  curl http://localhost:4000/health
+           Verify LITELLM_MASTER_KEY matches in docker-compose.yml and docker-compose.cms.yml
+
+  SYMPTOM: Step 8 (non-streaming) fails with 500 or DB error
+  CAUSE:   moon_cake database not created, or DDL not applied
+  FIX:     Check SPRING_JPA_HIBERNATE_DDL_AUTO=update is set in docker-compose.cms.yml
+           Check CMS logs: docker logs local-cms --tail 50
+
+  SYMPTOM: Outbox check in step 8 finds no row
+  CAUSE:   yty_kafka_event table not created (Hibernate DDL not ran)
+  FIX:     Confirm DDL_AUTO=update, restart CMS: docker compose ... up -d --build cms
+
+  SYMPTOM: Any step returns 401
+  CAUSE:   ADMIN_API_KEY mismatch or missing Authorization header
+  FIX:     Confirm ADMIN_API_KEY=cms-admin-key-local in docker-compose.cms.yml
+           and ADMIN_KEY="cms-admin-key-local" in scripts/test-cms.sh
+
+  SYMPTOM: CMS cannot connect to Kafka (startup errors about bootstrap servers)
+  CAUSE:   KAFKA_SERVER pointing to wrong listener
+  FIX:     Must be local-kafka:29092 (Docker-internal), NOT localhost:9092
+
+  SYMPTOM: CMS startup fails with Redis connection refused
+  CAUSE:   SPRING_DATA_REDIS_HOST not set, defaults to localhost which is unreachable inside Docker
+  FIX:     Confirm SPRING_DATA_REDIS_HOST=local-redis in docker-compose.cms.yml
+
+
+================================================================================
+ SECTION 6 — QUICK REFERENCE COMMAND CHEATSHEET
+================================================================================
+
+# Start entire local stack (base infra + CMS)
+cd /Users/kylewu/IdeaProjects/kylewu-test
+docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.cms.yml up -d --build cms
+
+# Rebuild CMS only after code changes
+cd /Users/kylewu/IdeaProjects/cost-management && mvn package -DskipTests
+cd /Users/kylewu/IdeaProjects/kylewu-test
+docker compose -f docker-compose.yml -f docker-compose.cms.yml up -d --build cms
+
+# View CMS logs live
+docker logs local-cms -f
+
+# Run function tests
+cd /Users/kylewu/IdeaProjects/cost-management
+bash scripts/test-cms.sh
+
+# Inspect MySQL (CMS tables)
+docker exec -it local-mysql mysql -uroot -proot moon_cake
+  SHOW TABLES;
+  SELECT id, request_id, entity_id, is_last_chunk, chunk_input_tokens FROM yty_cms_chunk_detail ORDER BY created_at DESC LIMIT 10;
+  SELECT id, topic, status FROM yty_kafka_event ORDER BY created_at DESC LIMIT 10;
+
+# Inspect LiteLLM model registry (PostgreSQL)
+docker exec -it local-postgres psql -U postgres -d local_db \
+  -c "SELECT model_id, model_name FROM litellm_proxymodeltable LIMIT 10;"
+
+# LiteLLM UI
+open http://localhost:4000/ui    # admin / admin
+
+# Stop everything
+docker compose -f docker-compose.yml -f docker-compose.cms.yml down
+
+================================================================================

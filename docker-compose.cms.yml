@@ -47,6 +47,10 @@ services:
       LITELLM_VIRTUAL_KEY: sk-local-master-key
 
       # ── CMS admin security ────────────────────────────────────────────────
+      # ── Redis (required by EB common AuthCacheService) ────────────────────────────────────
+      SPRING_DATA_REDIS_HOST: local-redis
+      SPRING_DATA_REDIS_PORT: 6379
+
       ADMIN_API_KEY: cms-admin-key-local
     networks:
       - kylewu-test_default
