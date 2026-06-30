@@ -380,8 +380,7 @@ bash scripts/test-cms.sh
 
 # Start entire local stack (base infra + CMS)
 cd /Users/kylewu/IdeaProjects/kylewu-test
-docker compose up -d
-docker compose -f docker-compose.yml -f docker-compose.cms.yml up -d --build cms
+docker compose -f docker-compose.yml -f docker-compose.cms.yml up -d
 
 # Rebuild CMS only after code changes
 cd /Users/kylewu/IdeaProjects/cost-management && mvn package -DskipTests
@@ -403,7 +402,7 @@ docker exec -it local-mysql mysql -uroot -proot moon_cake
 
 # Inspect LiteLLM model registry (PostgreSQL)
 docker exec -it local-postgres psql -U postgres -d local_db \
-  -c "SELECT model_id, model_name FROM litellm_proxymodeltable LIMIT 10;"
+  -c "SELECT model_id, model_name FROM \"LiteLLM_ProxyModelTable\" LIMIT 10;"
 
 # LiteLLM UI
 open http://localhost:4000/ui    # admin / admin

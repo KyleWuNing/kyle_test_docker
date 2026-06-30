@@ -58,10 +58,17 @@ model_list:
       model: openai/your-model-name
       api_base: https://ai.ctaigw.cn/v1
       api_key: sk-DSDGq5ilewcrQXe3X8Rn41rshro
-      input_cost_per_token: 0.00000015    # $0.15 per million tokens
-      output_cost_per_token: 0.0000006    # $0.60 per million tokens
+
+  - model_name: ct-agent-model
+    litellm_params:
+      model: openai/glm-5.1
+      api_base: https://ai.ctaigw.cn/v1
+      api_key: sk-DSDGq5ilewcrQXe3X8Rn41rshro
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
   store_model_in_db: true
+
+litellm_settings:
+  include_cost_in_streaming_usage: true
