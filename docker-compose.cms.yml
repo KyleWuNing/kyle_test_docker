@@ -27,6 +27,8 @@ services:
     container_name: local-cms
     ports:
       - "19000:19000"
+    volumes:
+      - /Users/kylewu/IdeaProjects/cost-management/logs:/app/logs
     environment:
       # ── Database (MySQL local-mysql) ──────────────────────────────────────
       DB_HOST: local-mysql
@@ -52,5 +54,10 @@ services:
       SPRING_DATA_REDIS_PORT: 6379
 
       ADMIN_API_KEY: cms-admin-key-local
-      BS_API_ENABLED: "false"
+      BS_API_ENABLED: ${BS_API_ENABLED:-true}
+      BS_API_BASE_URL: ${BS_API_BASE_URL:-https://test.api.easybilling.cloud/billing}
+      BS_API_KEY: ${BS_API_KEY:-client_api_key_tJ2s1RdmUUP1JZo3CWlTqo9JTIeCXrghFM5hek7z9G2F1cZg2}
+      BS_API_BILLABLE_METRIC_ID: ${BS_API_BILLABLE_METRIC_ID:-7de37399-ed7f-4f75-9ce8-c453e699773c}
+      YTY_CMS_USAGE_SCHEMA_NAME: ${YTY_CMS_USAGE_SCHEMA_NAME:-Cost-Dev}
+      YTY_CMS_USAGE_SCHEMA_ID: ${YTY_CMS_USAGE_SCHEMA_ID:-50186d53-591b-4aa4-9589-77e0e128ba8e}
     restart: unless-stopped
