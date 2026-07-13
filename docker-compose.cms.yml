@@ -39,6 +39,15 @@ services:
       # Use 'update' to auto-create/update tables (including kafka_event from EB common library)
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
 
+      # ── Quartz scheduler (same MySQL as main DB) ──────────────────────────
+      QUARTZ_DB_HOST: local-mysql
+      QUARTZ_DB_PORT: 3306
+      QUARTZ_DB_NAME: eb_quartz
+      QUARTZ_DB_USERNAME: root
+      QUARTZ_DB_PASSWORD: root
+      # Enable Quartz scheduler — must be one of [billing, payment, integration]
+      YTY_SCHEDULER_OWNER: billing
+
       # ── Kafka (internal listener for Docker-to-Docker) ────────────────────
       KAFKA_SERVER: local-kafka:29092
 
@@ -49,15 +58,22 @@ services:
       LITELLM_VIRTUAL_KEY: sk-local-master-key
 
       # ── CMS admin security ────────────────────────────────────────────────
-      # ── Redis (required by EB common AuthCacheService) ────────────────────────────────────
+      ADMIN_API_KEY: cms-admin-key-local
+
+      # ── Redis (required by EB common AuthCacheService) ─────────────────────
       SPRING_DATA_REDIS_HOST: local-redis
       SPRING_DATA_REDIS_PORT: 6379
 
-      ADMIN_API_KEY: cms-admin-key-local
-      BS_API_ENABLED: ${BS_API_ENABLED:-false}
+      # ── BS (Billing Service) API ──────────────────────────────────────────
+      BS_API_MODEL_SYNC_ENABLED: ${BS_API_MODEL_SYNC_ENABLED:-false}
+      BS_API_USAGE_NOTIFICATION_ENABLED: ${BS_API_USAGE_NOTIFICATION_ENABLED:-false}
+      BS_API_USAGE_NOTIFICATION_ENTITY_ID: ${BS_API_USAGE_NOTIFICATION_ENTITY_ID:-}
+      BS_API_USAGE_NOTIFICATION_CRON: ${BS_API_USAGE_NOTIFICATION_CRON:-0/30 * * * * ?}
       BS_API_BASE_URL: ${BS_API_BASE_URL:-https://test.api.easybilling.cloud/billing}
       BS_API_KEY: ${BS_API_KEY:-client_api_key_tJ2s1RdmUUP1JZo3CWlTqo9JTIeCXrghFM5hek7z9G2F1cZg2}
       BS_API_BILLABLE_METRIC_ID: ${BS_API_BILLABLE_METRIC_ID:-7de37399-ed7f-4f75-9ce8-c453e699773c}
-      YTY_CMS_USAGE_SCHEMA_NAME: ${YTY_CMS_USAGE_SCHEMA_NAME:-Cost-Dev}
-      YTY_CMS_USAGE_SCHEMA_ID: ${YTY_CMS_USAGE_SCHEMA_ID:-50186d53-591b-4aa4-9589-77e0e128ba8e}
+
+      # ── Usage event schema ────────────────────────────────────────────────
+      YTY_CMS_USAGE_EVENT_SCHEMA_NAME: ${YTY_CMS_USAGE_EVENT_SCHEMA_NAME:-Cost-Dev}
+      YTY_CMS_USAGE_EVENT_SCHEMA_ID: ${YTY_CMS_USAGE_EVENT_SCHEMA_ID:-50186d53-591b-4aa4-9589-77e0e128ba8e}
     restart: unless-stopped
