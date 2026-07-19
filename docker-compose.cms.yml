@@ -30,6 +30,8 @@ services:
     volumes:
       - /Users/kylewu/IdeaProjects/cost-management/logs:/app/logs
     environment:
+      # ── Server port ────────────────────────────────────────────────────────
+      MOONCAKE_PORT: 19000
       # ── Database (MySQL local-mysql) ──────────────────────────────────────
       DB_HOST: local-mysql
       DB_PORT: 3306
