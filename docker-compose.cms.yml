@@ -63,8 +63,14 @@ services:
       ADMIN_API_KEY: cms-admin-key-local
 
       # ── Redis (required by EB common AuthCacheService) ─────────────────────
-      SPRING_DATA_REDIS_HOST: local-redis
-      SPRING_DATA_REDIS_PORT: 6379
+      # Standalone mode (default):
+      SPRING_DATA_REDIS_HOST: ${SPRING_DATA_REDIS_HOST:-local-redis}
+      SPRING_DATA_REDIS_PORT: ${SPRING_DATA_REDIS_PORT:-6379}
+      # Cluster mode — set REDIS_MODE=cluster to activate. When set, SPRING_DATA_REDIS_HOST/PORT
+      # are ignored and Spring Boot uses cluster nodes instead.
+      REDIS_CLUSTER_NODES: ${REDIS_CLUSTER_NODES:-}
+      # Spring profile for cluster mode — set to "docker-cluster" when REDIS_MODE=cluster
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
 
       # ── BS (Billing Service) API ──────────────────────────────────────────
       BS_API_MODEL_SYNC_ENABLED: ${BS_API_MODEL_SYNC_ENABLED:-false}
