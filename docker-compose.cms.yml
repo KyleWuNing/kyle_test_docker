@@ -23,7 +23,7 @@ services:
       context: /Users/kylewu/IdeaProjects/cost-management
       dockerfile: src/main/docker/Dockerfile
       args:
-        JAR_FILE: target/cost-management-service-1.0.0-SNAPSHOT-exec.jar
+        JAR_FILE: target/cost-management-service-2.0.0-SNAPSHOT-exec.jar
     container_name: local-cms
     ports:
       - "19000:19000"
